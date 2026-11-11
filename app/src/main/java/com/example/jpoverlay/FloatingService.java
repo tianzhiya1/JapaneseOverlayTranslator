@@ -39,6 +39,17 @@ public class FloatingService extends Service {
     private String previousRequest="";
     private long lastRequestAt=0;
     private Runnable clearSubtitle;
+    private volatile long screenshotPriorityUntil=0;
+    private final Object translationMutex=new Object();
+    private boolean translationInFlight=false;
+    private PendingTranslation queuedTranslation=null;
+    private volatile int activeTranslation=0;
+
+    private static final class PendingTranslation {
+        final String text;
+        final boolean japanese, screenshot;
+        PendingTranslation(String t,boolean j,boolean s){text=t;japanese=j;screenshot=s;}
+    }
 
     public static void showText(String msg) {
         FloatingService s=instance;
@@ -151,6 +162,7 @@ public class FloatingService extends Service {
 
     private void beginSelection() {
         if(destroyed)return;
+        screenshotPriorityUntil=SystemClock.elapsedRealtime()+18000;
         subtitle.setVisibility(View.INVISIBLE);
         bubble.setVisibility(View.INVISIBLE);
         main.postDelayed(()->{
@@ -282,6 +294,7 @@ public class FloatingService extends Service {
     }
 
     private void maybeTranslate(String raw,boolean isFinal) {
+        if(SystemClock.elapsedRealtime()<screenshotPriorityUntil)return;
         String ja=normalizeJapanese(raw);
         if(ja.length()<3)return;
         if(ja.length()>130)ja=ja.substring(ja.length()-130);
@@ -295,20 +308,61 @@ public class FloatingService extends Service {
     private void translateText(String source,boolean fromJapanese,boolean screenshot){
         String text=source==null?"":source.trim();
         if(text.isEmpty())return;
+        if(screenshot)screenshotPriorityUntil=SystemClock.elapsedRealtime()+16000;
         Translator t=fromJapanese?japanese:english;
         if(t==null || !(fromJapanese?jaReady:enReady)){
-            if(screenshot)status("翻译模型正在下载，请联网后重试");
+            if(screenshot)status("翻译模型仍在下载，联网后请重试截图");
             return;
         }
+        PendingTranslation request=new PendingTranslation(text,fromJapanese,screenshot);
+        synchronized(translationMutex){
+            if(translationInFlight){
+                if(screenshot || queuedTranslation==null || !queuedTranslation.screenshot)
+                    queuedTranslation=request;
+                return;
+            }
+            translationInFlight=true;
+        }
+        submitTranslation(request);
+    }
+
+    private void submitTranslation(PendingTranslation request){
+        final Translator t=request.japanese?japanese:english;
+        if(t==null || destroyed){finishTranslation(activeTranslation);return;}
         final int generation=latestTranslation.incrementAndGet();
-        t.translate(text)
+        activeTranslation=generation;
+        t.translate(request.text)
             .addOnSuccessListener(zh->{
-                if(!destroyed&&generation==latestTranslation.get()&&!zh.trim().isEmpty())
-                    subtitleChinese(zh,screenshot);
+                if(!destroyed && activeTranslation==generation && !zh.trim().isEmpty())
+                    subtitleChinese(zh,request.screenshot);
+                finishTranslation(generation);
             })
             .addOnFailureListener(e->{
-                if(screenshot)status("选区翻译失败："+e.getMessage());
+                if(request.screenshot && activeTranslation==generation)
+                    status("选区翻译失败："+e.getMessage());
+                finishTranslation(generation);
             });
+        main.postDelayed(()->{
+            if(!destroyed && activeTranslation==generation){
+                if(request.screenshot)status("翻译响应超时，请换短一点的选区");
+                finishTranslation(generation);
+            }
+        },12500);
+    }
+
+    private void finishTranslation(int generation){
+        PendingTranslation next=null;
+        synchronized(translationMutex){
+            if(activeTranslation!=generation)return;
+            activeTranslation=0;
+            if(queuedTranslation!=null){
+                next=queuedTranslation;queuedTranslation=null;
+                translationInFlight=true;
+            }else{
+                translationInFlight=false;
+            }
+        }
+        if(next!=null)submitTranslation(next);
     }
 
     private File installModel()throws IOException {
