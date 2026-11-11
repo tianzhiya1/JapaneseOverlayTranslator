@@ -2,7 +2,7 @@ package com.example.jpoverlay;
 
 import android.accessibilityservice.AccessibilityService;
 import android.graphics.Bitmap;
-import android.graphics.HardwareBuffer;
+import android.hardware.HardwareBuffer;
 import android.os.Build;
 import android.view.Display;
 import android.view.accessibility.AccessibilityEvent;
