@@ -15,9 +15,18 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
+      - name: Bundle offline Japanese speech model
+        run: |
+          set -euxo pipefail
+          curl -fL --retry 3 --connect-timeout 30 "https://alphacephei.com/vosk/models/vosk-model-small-ja-0.22.zip" -o /tmp/ja.zip
+          mkdir -p app/src/main/assets
+          unzip -q /tmp/ja.zip -d app/src/main/assets
+          mv app/src/main/assets/vosk-model-small-ja-0.22 app/src/main/assets/model-ja
+          test -f app/src/main/assets/model-ja/conf/model.conf
+          du -sh app/src/main/assets/model-ja
       - run: gradle assembleDebug --stacktrace
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: JapaneseOverlayTranslator-debug-apk
+          name: JapaneseOverlayTranslator-v0.5-offline-apk
           path: app/build/outputs/apk/debug/*.apk
