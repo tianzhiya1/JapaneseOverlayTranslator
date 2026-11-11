@@ -3,10 +3,27 @@ on: [workflow_dispatch, push]
 concurrency:
   group: android-apk-${{ github.ref }}
   cancel-in-progress: true
+permissions:
+  contents: read
+  actions: write
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      - name: Cancel superseded queued runs in this repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -u
+          echo "Cleanup older queued Actions runs; current run is $GITHUB_RUN_ID"
+          old_ids=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs?status=queued&per_page=100" --jq '.workflow_runs[].id' 2>/dev/null || true)
+          for old_id in $old_ids; do
+            if [ "$old_id" != "$GITHUB_RUN_ID" ]; then
+              echo "Cancelling queued workflow run $old_id"
+              gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/$old_id/cancel" >/dev/null 2>&1 || echo "Unable to cancel run $old_id"
+            fi
+          done
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
