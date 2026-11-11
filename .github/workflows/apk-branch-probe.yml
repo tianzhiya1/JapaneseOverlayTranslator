@@ -1,0 +1,40 @@
+name: Android APK Branch Recovery
+on:
+  push:
+    branches:
+      - rescue-apk-v06
+    paths:
+      - '.github/workflows/apk-branch-probe.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Bundle Vosk Japanese model
+        run: |
+          set -euxo pipefail
+          curl -fL --retry 3 "https://alphacephei.com/vosk/models/vosk-model-small-ja-0.22.zip" -o /tmp/ja.zip
+          mkdir -p app/src/main/assets
+          unzip -q /tmp/ja.zip -d app/src/main/assets
+          mv app/src/main/assets/vosk-model-small-ja-0.22 app/src/main/assets/model-ja
+      - run: gradle --no-daemon --console=plain assembleDebug --stacktrace
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: JapaneseOverlayTranslator-v0.6-branch-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
