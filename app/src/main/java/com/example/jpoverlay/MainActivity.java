@@ -1,25 +1,97 @@
 package com.example.jpoverlay;
-import android.app.Activity;
-import android.os.Bundle;
-import android.content.Intent;
-import android.provider.Settings;
-import android.net.Uri;
+
 import android.Manifest;
+import android.app.Activity;
+import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.net.Uri;
+import android.os.*;
+import android.provider.Settings;
 import android.widget.*;
+
 public class MainActivity extends Activity {
- boolean pendingStart=false;
- @Override public void onCreate(Bundle b){super.onCreate(b);
- LinearLayout layout=new LinearLayout(this);layout.setOrientation(1);layout.setPadding(32,48,32,24);
- TextView info=new TextView(this);info.setText("日语悬浮翻译器 v0.4 测试版\n\n一个按钮启动悬浮窗与日语听音。文字识别需单独开启一次无障碍服务。\n\n注意：语音识别仍通过麦克风，并非视频内部音频。");info.setTextSize(17);layout.addView(info);
- Button start=new Button(this);start.setText("启动悬浮翻译（全部启动）");layout.addView(start);start.setOnClickListener(v->begin());
- Button access=new Button(this);access.setText("首次设置：开启文字读取权限");layout.addView(access);access.setOnClickListener(v->startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
- Button stop=new Button(this);stop.setText("停止悬浮翻译");layout.addView(stop);stop.setOnClickListener(v->stopService(new Intent(this,FloatingService.class)));
- setContentView(layout);
- }
- void begin(){pendingStart=true;if(!Settings.canDrawOverlays(this)){startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,Uri.parse("package:"+getPackageName())));return;}
- if(android.os.Build.VERSION.SDK_INT>=23&&checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},10);return;}
- pendingStart=false;Intent i=new Intent(this,FloatingService.class);i.setAction("LISTEN");startService(i);Toast.makeText(this,"悬浮窗和日语听音已请求启动",Toast.LENGTH_LONG).show();}
- @Override protected void onResume(){super.onResume();if(pendingStart&&Settings.canDrawOverlays(this)){new android.os.Handler(getMainLooper()).postDelayed(()->{if(pendingStart)begin();},300);}}
- @Override public void onRequestPermissionsResult(int req,String[] perms,int[] grants){super.onRequestPermissionsResult(req,perms,grants);if(req==10){if(grants.length>0&&grants[0]==PackageManager.PERMISSION_GRANTED)begin();else{pendingStart=false;Toast.makeText(this,"未获得麦克风权限，无法启动听音",Toast.LENGTH_LONG).show();}}}
+    private boolean overlayRequestLaunched=false;
+    private boolean requestedMic=false;
+    private boolean started=false;
+    private boolean manuallyStopped=false;
+    private TextView info;
+
+    @Override public void onCreate(Bundle state){
+        super.onCreate(state);
+        LinearLayout root=new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(36,52,36,24);
+        info=new TextView(this);
+        info.setTextSize(18);
+        info.setText("日语悬浮翻译 v0.5\n\n打开应用后自动启动离线日语听音。\n首次运行仅需授予悬浮窗和麦克风权限。");
+        root.addView(info);
+
+        Button retry=new Button(this);
+        retry.setText("启动 / 重新启动翻译");
+        root.addView(retry);
+        retry.setOnClickListener(v->{manuallyStopped=false;started=false;startIfReady();});
+
+        Button stop=new Button(this);
+        stop.setText("停止翻译");
+        root.addView(stop);
+        stop.setOnClickListener(v->{
+            manuallyStopped=true;started=false;
+            stopService(new Intent(this,FloatingService.class));
+            info.setText("已停止日语录音和翻译。\n再次打开应用会重新启动。");
+        });
+
+        Button accessibility=new Button(this);
+        accessibility.setText("仅首次设置：允许日文屏幕文字读取");
+        root.addView(accessibility);
+        accessibility.setOnClickListener(v->startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
+
+        setContentView(root);
+        new Handler(Looper.getMainLooper()).post(this::startIfReady);
+    }
+
+    @Override protected void onResume(){
+        super.onResume();
+        new Handler(Looper.getMainLooper()).postDelayed(()->{
+            if(!started&&!manuallyStopped&&Settings.canDrawOverlays(this))startIfReady();
+        },300);
+    }
+
+    private void startIfReady(){
+        if(started||manuallyStopped)return;
+        if(!Settings.canDrawOverlays(this)){
+            info.setText("首次设置：请允许在其他应用上层显示。\n授权后返回，翻译器会继续启动。");
+            if(!overlayRequestLaunched){
+                overlayRequestLaunched=true;
+                Intent intent=new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:"+getPackageName()));
+                startActivity(intent);
+            }
+            return;
+        }
+        if(Build.VERSION.SDK_INT>=23 &&
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){
+            info.setText("首次设置：需要麦克风权限，才能独立识别日语声音。");
+            if(!requestedMic){
+                requestedMic=true;
+                requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},100);
+            }
+            return;
+        }
+        started=true;
+        info.setText("日语翻译正在启动。\n请查看屏幕上方的小字幕，里面会显示真实录音与识别状态。\n\n这个版本使用独立离线日语识别，不需要 Google 语音服务。");
+        Intent service=new Intent(this,FloatingService.class);
+        if(Build.VERSION.SDK_INT>=26)startForegroundService(service);
+        else startService(service);
+    }
+
+    @Override public void onRequestPermissionsResult(int code,String[] permissions,int[] results){
+        super.onRequestPermissionsResult(code,permissions,results);
+        if(code==100){
+            if(results.length>0 && results[0]==PackageManager.PERMISSION_GRANTED){
+                startIfReady();
+            }else{
+                info.setText("没有麦克风权限，无法进行日语听音。\n可以在系统设置中授权后重新打开应用。");
+            }
+        }
+    }
 }
