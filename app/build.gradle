@@ -1,4 +1,16 @@
 plugins { id 'com.android.application' }
-android { namespace 'com.example.jpoverlay'; compileSdk 35
- defaultConfig { applicationId 'com.example.jpoverlay'; minSdk 26; targetSdk 32; versionCode 3; versionName '0.3' } }
-dependencies { implementation 'com.google.mlkit:translate:17.0.3' }
+android {
+    namespace 'com.example.jpoverlay'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'com.example.jpoverlay'
+        minSdk 26
+        targetSdk 32
+        versionCode 5
+        versionName '0.5'
+    }
+}
+dependencies {
+    implementation 'com.google.mlkit:translate:17.0.3'
+    implementation 'com.alphacephei:vosk-android:0.3.47'
+}
